@@ -1,0 +1,78 @@
+name: Build Pakistan Shopify list
+
+on:
+  workflow_dispatch:
+    inputs:
+      pk_only:
+        description: "Keep only .pk domains"
+        type: boolean
+        default: false
+      verify:
+        description: "Verify each domain is really Shopify (slower)"
+        type: boolean
+        default: false
+      start:
+        description: "First page to crawl"
+        default: "1"
+      end:
+        description: "Last page to crawl"
+        default: "1230"
+      delay:
+        description: "Seconds to wait between pages"
+        default: "2.5"
+  schedule:
+    - cron: "0 3 * * 0"   # every Sunday 03:00 UTC
+
+permissions:
+  contents: write
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run crawler
+        env:
+          PK_ONLY: ${{ inputs.pk_only }}
+          VERIFY: ${{ inputs.verify }}
+          START: ${{ inputs.start || '1' }}
+          END: ${{ inputs.end || '1230' }}
+          DELAY: ${{ inputs.delay || '2.5' }}
+        run: |
+          ARGS="--start $START --end $END --delay $DELAY --out list.txt"
+          [ "$PK_ONLY" = "true" ] && ARGS="$ARGS --pk-only"
+          [ "$VERIFY" = "true" ] && ARGS="$ARGS --verify"
+          python build_list.py $ARGS
+
+      - name: Summary
+        run: |
+          echo "### Result" >> "$GITHUB_STEP_SUMMARY"
+          echo "Total domains in list.txt: $(wc -l < list.txt)" >> "$GITHUB_STEP_SUMMARY"
+          echo "Domains ending in .pk: $(grep -c '\.pk$' list.txt || true)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload list as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: list
+          path: list.txt
+
+      - name: Commit updated list
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add list.txt
+          git diff --staged --quiet || git commit -m "Update list.txt"
+          git push
